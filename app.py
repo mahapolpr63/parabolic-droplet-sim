@@ -7,7 +7,7 @@ import math
 # 1. PAGE CONFIGURATION
 # ----------------------------------------------------
 st.set_page_config(
-    page_title="Inverted Paraboloid Droplet Theoretical Simulator",
+    page_title="Inverted Paraboloid Droplet Dynamics Simulator",
     page_icon="🌊",
     layout="wide"
 )
@@ -17,7 +17,7 @@ st.caption("โปรแกรมจำลองวิถีการกระ�
 st.markdown("---")
 
 # ----------------------------------------------------
-# 2. SIDEBAR - PARAMETERS & UNIT SWITCHER
+# 2. SIDEBAR - PARAMETERS & VISUAL CONTROLS
 # ----------------------------------------------------
 st.sidebar.header("⚙️ ปรับแต่งตัวแปร (Input Parameters)")
 
@@ -34,6 +34,13 @@ if unit_choice == "เซนติเมตร (cm)":
 else:
     u_scale = 1.0
     u_label = "m"
+
+# Visual Depth Multiplier (Fixes flat disk appearance)
+visual_boost = st.sidebar.slider(
+    "🔍 ตัวคูณปรับความลึกจานเพื่อการแสดงผล 3D (Visual Boost)",
+    min_value=1.0, max_value=30.0, value=10.0, step=1.0,
+    help="ปรับเพื่อขยายมิติความโค้งลึกของจานพาราโบลาบนภาพ 3D ให้เห็นเด่นชัด (ไม่มีผลต่อค่าคำนวณทางฟิสิกส์)"
+)
 
 with st.sidebar.expander("📌 1. รูปทรงจานและการหมุน", expanded=True):
     omega_rpm = st.number_input("ความเร็วรอบการหมุน (omega_rpm) [RPM]", value=1031.18, step=10.0, format="%.2f")
@@ -88,19 +95,21 @@ for i in range(1, steps + 1):
 if r_detach == R_max and u_s_detach == 0.0:
     u_s_detach = (rho_w * R_max * (h_film**2) * (Omega**2 + 2.0 * a * g)) / (3.0 * mu_w * math.sqrt(1.0 + 4.0 * (a**2) * (R_max**2)))
 
-z0 = H - a * (r_detach**2)
+z0_phys = H - a * (r_detach**2)
 alpha_detach = math.atan(2.0 * a * r_detach)
 v_radial_0 = u_s_detach * math.cos(alpha_detach)
 v_tan_0 = Omega * r_detach
 v_vert_0 = -u_s_detach * math.sin(alpha_detach)
 v_detach_mag = math.sqrt(v_radial_0**2 + v_tan_0**2 + v_vert_0**2)
 
-# 3.2 On-Disk Relative Spiral Angle & Velocity Integration
+# Visual Z Start for Dish (Applies Visual Boost)
+z0_vis = H - (a * visual_boost) * (r_detach**2)
+
+# 3.2 On-Disk Relative Spiral Angle & Velocity Integration (Coriolis Effect)
 dish_r_pts = np.linspace(0.001, r_detach, 120)
 dish_theta_rel = [0.0]
 v_disk_pts = []
 
-# Calculate local velocity at r=0.001
 u_s_start = (rho_w * dish_r_pts[0] * (h_film**2) * (Omega**2 + 2.0 * a * g)) / (3.0 * mu_w * math.sqrt(1.0 + 4.0 * (a**2) * (dish_r_pts[0]**2)))
 v_disk_pts.append(math.sqrt(u_s_start**2 + (Omega * dish_r_pts[0])**2))
 
@@ -112,20 +121,18 @@ for idx in range(len(dish_r_pts) - 1):
     u_s_c = (rho_w * r_c * (h_film**2) * (Omega**2 + 2.0 * a * g)) / (3.0 * mu_w * math.sqrt(1.0 + 4.0 * (a**2) * (r_c**2)))
     u_s_c = max(1e-5, u_s_c)
     
-    # Calculate local total velocity v(r)
     v_tan_c = Omega * r_c
     v_total_c = math.sqrt(u_s_c**2 + v_tan_c**2)
     v_disk_pts.append(v_total_c)
     
-    # Differential angle step dt and dtheta due to rotation/coriolis lag
     cos_a_c = 1.0 / math.sqrt(1.0 + 4.0 * (a**2) * (r_c**2))
     dt_step = dr / (u_s_c * cos_a_c)
-    dtheta = (Omega) * dt_step
+    dtheta = Omega * dt_step
     current_theta += dtheta
     dish_theta_rel.append(current_theta)
 
 dish_theta_rel = np.array(dish_theta_rel)
-theta_end = dish_theta_rel[-1]  # Final relative angle at r_detach
+theta_end = dish_theta_rel[-1]
 
 # 3.3 Airborne Stream Simulation Function (RK4)
 def simulate_airborne_stream(phi_angle):
@@ -137,7 +144,7 @@ def simulate_airborne_stream(phi_angle):
     t = 0.0
     x = r_detach * math.cos(phi_angle)
     y = r_detach * math.sin(phi_angle)
-    z = z0
+    z = z0_phys
     vx, vy, vz = vx0, vy0, vz0
 
     px, py, pz, pv, pt = [x], [y], [z], [math.sqrt(vx0**2 + vy0**2 + vz0**2)], [0.0]
@@ -190,17 +197,17 @@ st.subheader(f"🌐 แบบจำลอง 3 มิติ: การกระ�
 
 fig = go.Figure()
 
-# 5.1 Paraboloid Surface Mesh (Scaled)
-r_mesh = np.linspace(0, R_max, 45)
-theta_mesh = np.linspace(0, 2 * np.pi, 70)
+# 5.1 Paraboloid Surface Mesh (Enhanced Visual Depth Curve)
+r_mesh = np.linspace(0, R_max, 50)
+theta_mesh = np.linspace(0, 2 * np.pi, 80)
 R_grid, THETA_grid = np.meshgrid(r_mesh, theta_mesh)
 X_dish = (R_grid * np.cos(THETA_grid)) * u_scale
 Y_dish = (R_grid * np.sin(THETA_grid)) * u_scale
-Z_dish = (H - a * (R_grid**2)) * u_scale
+Z_dish = (H - (a * visual_boost) * (R_grid**2)) * u_scale
 
 fig.add_trace(go.Surface(
     x=X_dish, y=Y_dish, z=Z_dish,
-    colorscale='Ice', opacity=0.70, name="3D Parabolic Dish", showscale=False
+    colorscale='Ice', opacity=0.75, name="3D Parabolic Dish", showscale=False
 ))
 
 # 5.2 Generate 8 On-Disk Paths + 8 Airborne Streams
@@ -209,11 +216,11 @@ phi_angles = np.linspace(0, 2 * np.pi, num_streams, endpoint=False)
 impact_x, impact_y = [], []
 
 for idx, phi in enumerate(phi_angles):
-    # A. Continuous On-Disk Spiral Path (Ends exactly at detachment angle phi)
+    # A. Continuous On-Disk Spiral Path (Visual Boosted for Seamless Join)
     angle_profile = phi - (theta_end - dish_theta_rel)
     disk_x = (dish_r_pts * np.cos(angle_profile)) * u_scale
     disk_y = (dish_r_pts * np.sin(angle_profile)) * u_scale
-    disk_z = (H - a * (dish_r_pts**2)) * u_scale
+    disk_z = (H - (a * visual_boost) * (dish_r_pts**2)) * u_scale
     disk_r_disp = dish_r_pts * u_scale
     
     customdata_disk = np.stack((v_disk_pts, disk_r_disp), axis=-1)
@@ -233,12 +240,18 @@ for idx, phi in enumerate(phi_angles):
         showlegend=(idx == 0)
     ))
 
-    # B. Airborne Trajectory
+    # B. Airborne Trajectory (Proportionally Scaled Z for Visual Seamless Connection)
     px, py, pz, pv, pt, R_sp = simulate_airborne_stream(phi)
     px_disp = np.array(px) * u_scale
     py_disp = np.array(py) * u_scale
-    pz_disp = np.array(pz) * u_scale
     
+    # Scale Z visually so it starts seamlessly at the edge of the boosted dish
+    pz_arr = np.array(pz)
+    if z0_phys > 0:
+        pz_disp = (pz_arr * (z0_vis / z0_phys)) * u_scale
+    else:
+        pz_disp = pz_arr * u_scale
+        
     impact_x.append(px_disp[-1])
     impact_y.append(py_disp[-1])
     
@@ -285,7 +298,7 @@ fig.update_layout(
         yaxis_title=f'Y ({u_label})',
         zaxis_title=f'ความสูง Z ({u_label})',
         aspectmode='manual',
-        aspectratio=dict(x=1, y=1, z=0.6),
+        aspectratio=dict(x=1, y=1, z=0.65),
         camera=dict(eye=dict(x=1.4, y=1.4, z=1.1))
     ),
     margin=dict(l=0, r=0, b=0, t=30),
@@ -305,7 +318,7 @@ summary_col1, summary_col2 = st.columns(2)
 with summary_col1:
     st.markdown("**สภาวะ ณ จุดสลัดหลุด (Detachment Conditions):**")
     st.write(f"• รัศมีจุดสลัดหลุด ($r_{{detach}}$): `{r_detach * u_scale:.2f} {u_label}` (`{r_detach:.4f} m`) ")
-    st.write(f"• ความสูงจุดสลัดหลุด ($z_0$): `{z0 * u_scale:.2f} {u_label}` (`{z0:.4f} m`) ")
+    st.write(f"• ความสูงจุดสลัดหลุดทางกายภาพ ($z_0$): `{z0_phys * u_scale:.2f} {u_label}` (`{z0_phys:.4f} m`) ")
     st.write(f"• ความเร็วสไลด์ตามแนวผิว ($u_s$): `{u_s_detach:.3f} m/s`")
     st.write(f"• ความเร็วตามแนวเส้นสัมผัส ($v_\\theta$): `{v_tan_0:.3f} m/s`")
 
